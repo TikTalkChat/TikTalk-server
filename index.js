@@ -6,74 +6,44 @@ const app = express();
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server, path: "/ws" });
 
-let waiting = null; // waiting user
-const pairs = new Map(); // map of ws -> partner
-
-function send(ws, data) {
-  if (ws.readyState === 1) {
-    ws.send(JSON.stringify(data));
-  }
-}
+let waiting = null; // ek banda wait karega
 
 wss.on("connection", (ws) => {
-  console.log("New user connected");
+  ws.partner = null;
 
-  // if waiting is empty, put this user in waiting
-  if (!waiting) {
-    waiting = ws;
-    send(ws, { type: "status", text: "Searching for a stranger..." });
-  } else {
-    // pair the waiting user with this new user
-    const partner = waiting;
+  if (waiting) {
+    // Agar koi wait kar raha hai to connect karo
+    ws.partner = waiting;
+    waiting.partner = ws;
+
+    ws.send(JSON.stringify({ type: "system", text: "connected" }));
+    waiting.send(JSON.stringify({ type: "system", text: "connected" }));
+
     waiting = null;
-
-    pairs.set(ws, partner);
-    pairs.set(partner, ws);
-
-    send(ws, { type: "status", text: "Connected to a stranger ✅" });
-    send(partner, { type: "status", text: "Connected to a stranger ✅" });
+  } else {
+    // Warna wait me daal do
+    waiting = ws;
+    ws.send(JSON.stringify({ type: "system", text: "waiting" }));
   }
 
   ws.on("message", (raw) => {
-    let data;
-    try {
-      data = JSON.parse(raw.toString());
-    } catch {
-      data = { type: "message", text: raw.toString() };
-    }
-
-    const partner = pairs.get(ws);
-
-    if (data.type === "typing" && partner) {
-      send(partner, { type: "typing" });
-      return;
-    }
-
-    if (data.type === "message" && partner) {
-      send(partner, { type: "message", text: data.text ?? "" });
+    const data = raw.toString();
+    if (ws.partner && ws.partner.readyState === 1) {
+      ws.partner.send(data);
     }
   });
 
   ws.on("close", () => {
-    console.log("User disconnected");
-    const partner = pairs.get(ws);
-
-    if (partner) {
-      send(partner, { type: "status", text: "❌ Stranger disconnected" });
-      pairs.delete(partner);
-      pairs.delete(ws);
-      // partner ko fir waiting me daal do naya connection ke liye
-      if (partner.readyState === 1) {
-        waiting = partner;
-      }
-    } else if (waiting === ws) {
-      waiting = null;
+    if (ws.partner && ws.partner.readyState === 1) {
+      ws.partner.send(JSON.stringify({ type: "system", text: "disconnected" }));
+      ws.partner.partner = null;
     }
+    if (waiting === ws) waiting = null;
   });
 });
 
 app.get("/", (_, res) => {
-  res.send("TikTalk WebSocket Server running ✅");
+  res.send("✅ TikTalk WebSocket Server is running");
 });
 
 const PORT = process.env.PORT || 10000;
